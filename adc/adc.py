@@ -6,10 +6,16 @@ Date: 2020-10-19
 
 import numpy as np
 from sklearn.cluster import KMeans
+import progressbar as pb
 
 
 class ADC:
-    """
+    """Asymmetric Distance Computation (ADC)
+
+    This class provides an implementation of Asymmetric Distance Computation (ADC)
+    originally described in [1]_ and [2]_. The class is able to quantize a high-dimensional
+    vector to a sequence of bytes, each having its own KMeans-model.
+
     Parameters
     ----------
     m : int, default=16
@@ -23,6 +29,16 @@ class ADC:
         List of m KMeans models that fit the m subvectors respectively
     database : array(unit8), shape (n, m)
         Database of quantized vectors
+
+    References
+    ----------
+    .. [1] Jegou, H., Douze, M., & Schmid, C. (2010). Product quantization
+           for nearest neighbor search. IEEE transactions on pattern analysis
+           and machine intelligence, 33(1), 117-128.
+
+    .. [2] Jegou, H., Perronnin, F., Douze, M., Sánchez, J., Perez, P., & Schmid,
+           C. (2011). Aggregating local image descriptors into compact codes. IEEE
+           transactions on pattern analysis and machine intelligence, 34(9), 1704-1716.
     """
     def __init__(self, m=16, bs=8):
         self.kmeans = None
@@ -45,7 +61,7 @@ class ADC:
         """
         self.kmeans = []
         n, d = X.shape
-        for i in range(self.m):
+        for i in pb.progressbar(range(self.m)):
             self.kmeans.append(KMeans(self.k)
                                .fit(X[:, int(i * (d / self.m)):int((i + 1) * (d / self.m))]))  # Subsequently train Kmeans-models
         self.database = self.transform(X)
@@ -104,10 +120,22 @@ class ADC:
                        - self.kmeans[j].cluster_centers_[self.database[i, j]]
                 lut[i, j] = dist @ dist  # Construct look-up-table
 
-        scores = lut.sum(axis=1)
+        scores = lut.sum(axis=1)  # Row-wise sum
         return scores
 
     def transform(self, X):
+        """Quantize a matrix X to binary codes
+
+        Parameters
+        ----------
+        X : array, shape(n, d)
+            Matrix of global descriptors to be quantized
+
+        Returns
+        -------
+        np.hstack(tmp) : array, shape(n, m)
+            Quantized version of X
+        """
         n, d = X.shape
         tmp = []
         for i in range(self.m):
@@ -117,6 +145,18 @@ class ADC:
         return np.hstack(tmp)
 
     def fit_transform(self, X):
+        """Subsequently fit the KMeans-models and quantize X
+
+        Parameters
+        ----------
+        X : array, shape (n, d)
+            Matrix of global descriptors to be quantized
+
+        Returns
+        -------
+        database : array, shape (n, m)
+            Quantized matrix X
+        """
         self._train(X)
         return self.database
 
