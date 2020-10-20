@@ -70,6 +70,7 @@ class ADC:
                                  len(self.kmeans)))
         for i in range(self.m):
             self.centers[..., i] = self.kmeans[i].cluster_centers_
+        self.centers = self.centers.transpose((2, 0, 1))
 
         self.database = self.transform(X)
 
@@ -117,16 +118,16 @@ class ADC:
         scores : array, shape(n,)
             Vector of distances for each database-entry
         """
-
         x = X.reshape((1, self.m, -1))
-        tmp = np.zeros((len(self.database), self.m, x.shape[2]))
 
+        # TODO: This part needs to be vectorized!
+        tmp = []
         for j in range(self.m):
-            tmp[:, j] = self.centers[..., j][self.database[:, j]]
+            tmp.append(self.centers[j][self.database[:, j]][:, None, :])  # Introduce new axis in order to be able...
+        tmp = np.hstack(tmp)  # ...to stack subtensors horizontally
 
-        delta = x - tmp  # Take row-wise difference (both are 3d-tensors)
-        reduced = np.einsum("ijk,ijk->ij", delta, delta)  # Einstein-summation; reduction of 2nd axis
-        scores = reduced.sum(axis=1)
+        # Einstein-summation: Reduce 2nd axis
+        scores = np.einsum("ijk,ijk->ij", x-tmp, x-tmp).sum(axis=1)  # Equiv. to squared-norm-distance along 2nd axis
         return scores
 
     def transform(self, X):
