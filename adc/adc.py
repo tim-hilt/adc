@@ -63,7 +63,14 @@ class ADC:
         n, d = X.shape
         for i in pb.progressbar(range(self.m)):
             self.kmeans.append(KMeans(self.k)
-                               .fit(X[:, int(i * (d / self.m)):int((i + 1) * (d / self.m))]))  # Subsequently train Kmeans-models
+                               .fit(X[:, int(i * (d / self.m)):int((i + 1) * (d / self.m))]))
+
+        self.centers = np.zeros((self.kmeans[0].cluster_centers_.shape[0],
+                                 self.kmeans[0].cluster_centers_.shape[1],
+                                 len(self.kmeans)))
+        for i in range(self.m):
+            self.centers[..., i] = self.kmeans[i].cluster_centers_
+
         self.database = self.transform(X)
 
     def fit(self, X):
@@ -110,17 +117,16 @@ class ADC:
         scores : array, shape(n,)
             Vector of distances for each database-entry
         """
-        d = len(X)
 
-        lut = np.zeros((len(self.database), self.m))
-        # TODO: Could this be vectorized, so that i wouldn't have to loop over both dimensions? (Maybe with strides)
-        for i in range(lut.shape[0]):
-            for j in range(lut.shape[1]):
-                dist = X[int(j * (d / self.m)):int((j + 1) * (d / self.m))] \
-                       - self.kmeans[j].cluster_centers_[self.database[i, j]]
-                lut[i, j] = dist @ dist  # Construct look-up-table
+        x = X.reshape((1, self.m, -1))
+        tmp = np.zeros((len(self.database), self.m, x.shape[2]))
 
-        scores = lut.sum(axis=1)  # Row-wise sum
+        for j in range(self.m):
+            tmp[:, j] = self.centers[..., j][self.database[:, j]]
+
+        delta = x - tmp  # Take row-wise difference (both are 3d-tensors)
+        reduced = np.einsum("ijk,ijk->ij", delta, delta)  # Einstein-summation; reduction of 2nd axis
+        scores = reduced.sum(axis=1)
         return scores
 
     def transform(self, X):
