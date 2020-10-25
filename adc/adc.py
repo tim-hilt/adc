@@ -20,8 +20,8 @@ class ADC:
     ----------
     m : int, default=16
         How many subvectors to create
-    bs : int, default = 8
-        How many bits to encode per subvector
+    k : int, default = 256
+        How many centroids to use for each KMeans-model
 
     Attributes
     ----------
@@ -40,12 +40,13 @@ class ADC:
            C. (2011). Aggregating local image descriptors into compact codes. IEEE
            transactions on pattern analysis and machine intelligence, 34(9), 1704-1716.
     """
-    def __init__(self, m=16, bs=8):
+
+    def __init__(self, m=16, k=256):
         self.kmeans = None
         self.database = None
         self.m = m
-        self.bs = bs
-        self.k = 2**bs
+        self.k = k
+        self.bs = np.log2(k)
 
     def _train(self, X):
         """Internal utility function that trains the KMeans clusters
@@ -62,15 +63,12 @@ class ADC:
         self.kmeans = []
         n, d = X.shape
         for i in pb.progressbar(range(self.m)):
-            self.kmeans.append(KMeans(self.k)
-                               .fit(X[:, int(i * (d / self.m)):int((i + 1) * (d / self.m))]))
+            self.kmeans.append(KMeans(self.k).fit(X[:, int(i * (d / self.m)):int((i + 1) * (d / self.m))]))
 
-        self.centers = np.zeros((self.kmeans[0].cluster_centers_.shape[0],
-                                 self.kmeans[0].cluster_centers_.shape[1],
-                                 len(self.kmeans)))
+        self.centers = np.empty((self.k, self.m, int(d / self.m)))
+
         for i in range(self.m):
-            self.centers[..., i] = self.kmeans[i].cluster_centers_
-        self.centers = self.centers.transpose((2, 0, 1))
+            self.centers[:, i, :] = self.kmeans[i].cluster_centers_
 
         self.database = self.transform(X)
 
@@ -119,15 +117,10 @@ class ADC:
             Vector of distances for each database-entry
         """
         x = X.reshape((1, self.m, -1))
+        tmp = x - self.centers
 
-        # TODO: This part needs to be vectorized!
-        tmp = []
-        for j in range(self.m):
-            tmp.append(self.centers[j][self.database[:, j]][:, None, :])  # Introduce new axis in order to be able...
-        tmp = np.hstack(tmp)  # ...to stack subtensors horizontally
-
-        # Einstein-summation: Reduce 2nd axis
-        scores = np.einsum("ijk,ijk->ij", x-tmp, x-tmp).sum(axis=1)  # Equiv. to squared-norm-distance along 2nd axis
+        LUT = np.einsum("ijk,ijk->ij", tmp, tmp)
+        scores = LUT[self.database, range(LUT.shape[1])].sum(axis=1)
         return scores
 
     def transform(self, X):
@@ -147,8 +140,12 @@ class ADC:
         tmp = []
         for i in range(self.m):
             # uint8 is ok for everything that's smaller than 256 values; maybe there is a better way
-            tmp.append(self.kmeans[i].predict(X[:, int(i * (d / self.m)):int((i + 1) * (d / self.m))])
-                       .astype(np.uint8)[:, None])
+            if self.bs <= 8:
+                tmp.append(self.kmeans[i].predict(X[:, int(i * (d / self.m)):int((i + 1) * (d / self.m))])
+                           .astype(np.uint8)[:, None])
+            else:
+                tmp.append(self.kmeans[i].predict(X[:, int(i * (d / self.m)):int((i + 1) * (d / self.m))])
+                           .astype(np.uint16)[:, None])
         return np.hstack(tmp)
 
     def fit_transform(self, X):
